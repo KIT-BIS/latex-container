@@ -1,0 +1,75 @@
+name: Multi-Platform Build and Push
+
+on:
+  push:
+    branches:
+      - main
+      - seed
+    tags:
+      - 'v*'
+  pull_request:
+
+env:
+  IMAGE_NAME: latex_container
+
+jobs:
+  build_and_push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # Set up QEMU for cross-platform emulation.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      # Set up Buildx with a driver that supports multi-platform builds.
+      - name: Set up Buildx builder
+        run: |
+          docker buildx create --name multi-builder --use --driver docker-container
+          docker buildx inspect multi-builder --bootstrap
+      
+      # Log in to GitHub Container Registry.
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Determine the version tag from the Git reference.
+      - name: Determine version tag
+        id: version
+        run: |
+          ref=${GITHUB_REF##*/}
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            ref=${ref#v}
+          fi
+          if [[ $ref == "main" ]]; then
+            ref=latest
+          fi
+          echo "VERSION=$ref" >> $GITHUB_ENV
+          echo "Version set to $ref"
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: user/app
+          tags: |
+            type=semver,pattern={{version}}
+            type=ref,event=branch
+          labels: |
+            org.opencontainers.image.title=Latex Builder
+            org.opencontainers.image.description=Container for LaTeX with all latex packages, bibtex-tidy and Playwright
+            org.opencontainers.image.licenses=MIT
+      # Build and push the multi-platform image using Buildx.
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
