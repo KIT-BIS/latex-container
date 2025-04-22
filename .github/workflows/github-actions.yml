@@ -16,6 +16,10 @@ jobs:
   # First job: Build individual platform images and upload digests
   build:
     runs-on: ubuntu-latest
+    # Add explicit permissions
+    permissions:
+      contents: read
+      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -41,7 +45,7 @@ jobs:
 
       # Log in to GitHub Container Registry
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -61,17 +65,6 @@ jobs:
           echo "VERSION=$ref" >> $GITHUB_ENV
           echo "Version set to $ref"
 
-      # Generate Docker metadata
-      - name: Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
-          labels: |
-            org.opencontainers.image.title=Latex Builder
-            org.opencontainers.image.description=Container for LaTeX with all latex packages, bibtex-tidy and Playwright
-            org.opencontainers.image.licenses=MIT
-
       # Normalize GitHub owner (lowercase)
       - name: Normalize GitHub owner (lowercase)
         run: echo "REPO_OWNER_LC=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
@@ -84,8 +77,8 @@ jobs:
           context: .
           file: Dockerfile
           platforms: ${{ matrix.platform }}
-          labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,push-by-digest=true,name-canonical=true,push=true
+          provenance: false
           tags: ghcr.io/${{ env.REPO_OWNER_LC }}/${{ env.IMAGE_NAME }}
 
       # Export digest for later use
@@ -107,6 +100,10 @@ jobs:
   # Second job: Merge digests and create manifest list
   merge:
     runs-on: ubuntu-latest
+    # Add explicit permissions
+    permissions:
+      contents: read
+      packages: write
     needs:
       - build
     steps:
@@ -120,7 +117,7 @@ jobs:
 
       # Log in to GitHub Container Registry again
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -148,27 +145,23 @@ jobs:
           echo "VERSION=$ref" >> $GITHUB_ENV
           echo "Version set to $ref"
 
-      # Generate Docker metadata for final image
-      - name: Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ env.REPO_OWNER_LC }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=raw,value=${{ env.VERSION }}
-
       # Create manifest list and push
       - name: Create manifest list and push
         working-directory: ${{ runner.temp }}/digests
         run: |
-          IMAGE_REPO="ghcr.io/${{ env.REPO_OWNER_LC }}/${{ env.IMAGE_NAME }}"
-          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf '$IMAGE_REPO@sha256:%s ' *)
+          REPO="ghcr.io/${{ env.REPO_OWNER_LC }}/${{ env.IMAGE_NAME }}"
+          TAG="${{ env.VERSION }}"
+          
+          # List all digests
+          echo "Found digests:"
+          ls -la
+          
+          # Create manifest with explicit tag
+          docker buildx imagetools create --tag ${REPO}:${TAG} $(printf "${REPO}@sha256:%s " *)
+          
+          echo "Created multi-platform image: ${REPO}:${TAG}"
 
       # Inspect the final image
       - name: Inspect image
         run: |
-          docker buildx imagetools inspect ghcr.io/${{ env.REPO_OWNER_LC }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version || env.VERSION }}
+          docker buildx imagetools inspect ghcr.io/${{ env.REPO_OWNER_LC }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
