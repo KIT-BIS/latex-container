@@ -13,25 +13,33 @@ env:
   IMAGE_NAME: latex_container
 
 jobs:
-  build_and_push:
+  # First job: Build individual platform images and upload digests
+  build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      # Set up QEMU for cross-platform emulation.
+      - name: Prepare
+        run: |
+          platform=${{ matrix.platform }}
+          echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
+
+      # Set up QEMU for platform emulation
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
-      # Set up Buildx with a driver that supports multi-platform builds.
-      - name: Set up Buildx builder
-        run: |
-          docker buildx create --name multi-builder --use --driver docker-container
-          docker buildx inspect multi-builder --bootstrap
-      
-      # Log in to GitHub Container Registry.
+      # Set up Docker Buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Log in to GitHub Container Registry
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v2
         with:
@@ -39,7 +47,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Determine the version tag from the Git reference.
+      # Determine the version tag
       - name: Determine version tag
         id: version
         run: |
@@ -52,26 +60,115 @@ jobs:
           fi
           echo "VERSION=$ref" >> $GITHUB_ENV
           echo "Version set to $ref"
+
+      # Generate Docker metadata
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: user/app
-          tags: |
-            type=semver,pattern={{version}}
-            type=ref,event=branch
+          images: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
           labels: |
             org.opencontainers.image.title=Latex Builder
             org.opencontainers.image.description=Container for LaTeX with all latex packages, bibtex-tidy and Playwright
             org.opencontainers.image.licenses=MIT
-      # Build and push the multi-platform image using Buildx.
+
+      # Normalize GitHub owner (lowercase)
       - name: Normalize GitHub owner (lowercase)
         run: echo "REPO_OWNER_LC=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
-      - name: Build and push Docker image
+
+      # Build and push by digest
+      - name: Build and push by digest
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile
-          push: true
-          platforms: linux/amd64,linux/arm64
-          tags: ghcr.io/${{ env.REPO_OWNER_LC }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
+          tags: ghcr.io/${{ env.REPO_OWNER_LC }}/${{ env.IMAGE_NAME }}
+
+      # Export digest for later use
+      - name: Export digest
+        run: |
+          mkdir -p ${{ runner.temp }}/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      # Upload digest as artifact
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ env.PLATFORM_PAIR }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Second job: Merge digests and create manifest list
+  merge:
+    runs-on: ubuntu-latest
+    needs:
+      - build
+    steps:
+      # Download all digest artifacts
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      # Log in to GitHub Container Registry again
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Set up Docker Buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Normalize GitHub owner (lowercase) again
+      - name: Normalize GitHub owner (lowercase)
+        run: echo "REPO_OWNER_LC=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
+      # Determine version tag
+      - name: Determine version tag
+        id: version
+        run: |
+          ref=${GITHUB_REF##*/}
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            ref=${ref#v}
+          fi
+          if [[ $ref == "main" ]]; then
+            ref=latest
+          fi
+          echo "VERSION=$ref" >> $GITHUB_ENV
+          echo "Version set to $ref"
+
+      # Generate Docker metadata for final image
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ env.REPO_OWNER_LC }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=raw,value=${{ env.VERSION }}
+
+      # Create manifest list and push
+      - name: Create manifest list and push
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          IMAGE_REPO="ghcr.io/${{ env.REPO_OWNER_LC }}/${{ env.IMAGE_NAME }}"
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '$IMAGE_REPO@sha256:%s ' *)
+
+      # Inspect the final image
+      - name: Inspect image
+        run: |
+          docker buildx imagetools inspect ghcr.io/${{ env.REPO_OWNER_LC }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version || env.VERSION }}
