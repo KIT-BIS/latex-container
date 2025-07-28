@@ -1,6 +1,7 @@
 name: Multi-Platform Build and Push
 
 on:
+  workflow_dispatch:  
   push:
     branches:
       - main
