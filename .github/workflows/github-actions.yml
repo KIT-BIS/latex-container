@@ -1,7 +1,7 @@
 name: Multi-Platform Build and Push
 
 on:
-  workflow_dispatch:  
+  workflow_dispatch:
   push:
     branches:
       - main
@@ -14,19 +14,23 @@ env:
   IMAGE_NAME: latex_container
 
 jobs:
-  # First job: Build individual platform images and upload digests
+  # First job: Build individual platform images natively
   build:
-    runs-on: ubuntu-latest
-    # Add explicit permissions
+    # The runner is now determined by the matrix
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
     strategy:
       fail-fast: false
       matrix:
-        platform:
-          - linux/amd64
-          - linux/arm64
+        # Define platform and runner pairs
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            # Use a native ARM runner for arm64 builds
+            runner: ubuntu-24.04-arm
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -36,15 +40,11 @@ jobs:
           platform=${{ matrix.platform }}
           echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
 
-      # Set up QEMU for platform emulation
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      # Note: The QEMU setup step is no longer needed for native builds
 
-      # Set up Docker Buildx
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Log in to GitHub Container Registry
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -52,7 +52,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Determine the version tag
       - name: Determine version tag
         id: version
         run: |
@@ -66,30 +65,27 @@ jobs:
           echo "VERSION=$ref" >> $GITHUB_ENV
           echo "Version set to $ref"
 
-      # Normalize GitHub owner (lowercase)
       - name: Normalize GitHub owner (lowercase)
         run: echo "REPO_OWNER_LC=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
-      # Build and push by digest
       - name: Build and push by digest
         id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile
+          # Build for the specific platform of this job
           platforms: ${{ matrix.platform }}
           outputs: type=image,push-by-digest=true,name-canonical=true,push=true
           provenance: false
           tags: ghcr.io/${{ env.REPO_OWNER_LC }}/${{ env.IMAGE_NAME }}
 
-      # Export digest for later use
       - name: Export digest
         run: |
           mkdir -p ${{ runner.temp }}/digests
           digest="${{ steps.build.outputs.digest }}"
           touch "${{ runner.temp }}/digests/${digest#sha256:}"
 
-      # Upload digest as artifact
       - name: Upload digest
         uses: actions/upload-artifact@v4
         with:
@@ -98,17 +94,15 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Second job: Merge digests and create manifest list
+  # Second job: Merge digests and create manifest list (unchanged)
   merge:
     runs-on: ubuntu-latest
-    # Add explicit permissions
     permissions:
       contents: read
       packages: write
     needs:
       - build
     steps:
-      # Download all digest artifacts
       - name: Download digests
         uses: actions/download-artifact@v4
         with:
@@ -116,7 +110,6 @@ jobs:
           pattern: digests-*
           merge-multiple: true
 
-      # Log in to GitHub Container Registry again
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -124,15 +117,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Set up Docker Buildx
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Normalize GitHub owner (lowercase) again
       - name: Normalize GitHub owner (lowercase)
         run: echo "REPO_OWNER_LC=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
-      # Determine version tag
       - name: Determine version tag
         id: version
         run: |
@@ -146,23 +136,20 @@ jobs:
           echo "VERSION=$ref" >> $GITHUB_ENV
           echo "Version set to $ref"
 
-      # Create manifest list and push
       - name: Create manifest list and push
         working-directory: ${{ runner.temp }}/digests
         run: |
           REPO="ghcr.io/${{ env.REPO_OWNER_LC }}/${{ env.IMAGE_NAME }}"
           TAG="${{ env.VERSION }}"
-          
-          # List all digests
+
           echo "Found digests:"
           ls -la
-          
-          # Create manifest with explicit tag
+
           docker buildx imagetools create --tag ${REPO}:${TAG} $(printf "${REPO}@sha256:%s " *)
-          
+
           echo "Created multi-platform image: ${REPO}:${TAG}"
 
-      # Inspect the final image
       - name: Inspect image
         run: |
           docker buildx imagetools inspect ghcr.io/${{ env.REPO_OWNER_LC }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
+
