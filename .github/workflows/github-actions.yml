@@ -79,9 +79,14 @@ jobs:
           outputs: type=image,push-by-digest=true,name-canonical=true,push=true
           provenance: false
           tags: ghcr.io/${{ env.REPO_OWNER_LC }}/${{ env.IMAGE_NAME }}
-          # Add Docker layer caching
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Cache from registry and GitHub Actions cache
+          cache-from: |
+            type=registry,ref=ghcr.io/${{ env.REPO_OWNER_LC }}/${{ env.IMAGE_NAME }}:cache-${{ env.PLATFORM_PAIR }}
+            type=registry,ref=ghcr.io/${{ env.REPO_OWNER_LC }}/${{ env.IMAGE_NAME }}:latest
+            type=gha
+          cache-to: |
+            type=registry,ref=ghcr.io/${{ env.REPO_OWNER_LC }}/${{ env.IMAGE_NAME }}:cache-${{ env.PLATFORM_PAIR }},mode=max
+            type=gha,mode=max
 
       - name: Export digest
         run: |
