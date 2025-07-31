@@ -79,6 +79,9 @@ jobs:
           outputs: type=image,push-by-digest=true,name-canonical=true,push=true
           provenance: false
           tags: ghcr.io/${{ env.REPO_OWNER_LC }}/${{ env.IMAGE_NAME }}
+          # Add Docker layer caching
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Export digest
         run: |
@@ -152,4 +155,3 @@ jobs:
       - name: Inspect image
         run: |
           docker buildx imagetools inspect ghcr.io/${{ env.REPO_OWNER_LC }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
-
