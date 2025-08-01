@@ -33,6 +33,10 @@ RUN apt-get update && apt-get -y install --no-install-recommends \
     && apt-get clean -y \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Rust and Cargo
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
+    && . ~/.cargo/env
+
 # Download and install TeX Live 2025 manually
 RUN cd /tmp \
     && wget -O install-tl-unx.tar.gz https://mirror.ctan.org/systems/texlive/tlnet/install-tl-unx.tar.gz \
@@ -79,7 +83,9 @@ RUN . /etc/texlive-arch \
     && export INFOPATH="/usr/local/texlive/2025/texmf-dist/doc/info:$INFOPATH" \
     && npm install -g bibtex-tidy playwright \
     && npx playwright install --with-deps chromium \
-    && curl -fsSL https://d2lang.com/install.sh | sh -s --
+    && curl -fsSL https://d2lang.com/install.sh | sh -s -- \
+    && . ~/.cargo/env \
+    && cargo install tex-fmt
 
 # Install additional LaTeX tools using tlmgr
 RUN . /etc/texlive-arch \
@@ -88,7 +94,7 @@ RUN . /etc/texlive-arch \
     && tlmgr install latexmk chktex biber
 
 # Set final environment variables for runtime (both architectures in PATH for compatibility)
-ENV PATH="/usr/local/texlive/2025/bin/x86_64-linux:/usr/local/texlive/2025/bin/aarch64-linux:$PATH"
+ENV PATH="/root/.cargo/bin:/usr/local/texlive/2025/bin/x86_64-linux:/usr/local/texlive/2025/bin/aarch64-linux:$PATH"
 ENV MANPATH="/usr/local/texlive/2025/texmf-dist/doc/man:$MANPATH"
 ENV INFOPATH="/usr/local/texlive/2025/texmf-dist/doc/info:$INFOPATH"
 
@@ -97,3 +103,4 @@ ENV DEBIAN_FRONTEND=dialog
 
 # Verify installation
 RUN which tex && which xelatex && which pdflatex && tex --version
+
