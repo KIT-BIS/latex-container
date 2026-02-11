@@ -31,6 +31,7 @@ RUN apt-get update && apt-get -y install --no-install-recommends \
     liblog-dispatch-perl \
     libunicode-linebreak-perl \
     poppler-utils \
+    pdf2svg \
     && apt-get clean -y \
     && rm -rf /var/lib/apt/lists/*
 
