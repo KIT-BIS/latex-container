@@ -30,6 +30,7 @@ RUN apt-get update && apt-get -y install --no-install-recommends \
     libfile-homedir-perl \
     liblog-dispatch-perl \
     libunicode-linebreak-perl \
+    poppler-utils \
     && apt-get clean -y \
     && rm -rf /var/lib/apt/lists/*
 
