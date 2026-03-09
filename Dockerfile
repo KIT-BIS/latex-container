@@ -11,7 +11,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TEXLIVE_INSTALL_NO_REBUILD=1
 
 # ---------------------------------------------------------------------------- #
-#  System packages  (jq moved here – avoids a second apt-get update later)
+#  System packages
 # ---------------------------------------------------------------------------- #
 RUN apt-get update && apt-get install -y --no-install-recommends \
     apt-utils \
@@ -68,30 +68,30 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 ENV PATH="/root/.cargo/bin:$PATH"
 
 # ---------------------------------------------------------------------------- #
-#  TeX Live 2025 – full scheme, no docs/src to keep image lean
+#  TeX Live 2025 – full scheme, no docs/src
 # ---------------------------------------------------------------------------- #
 RUN cd /tmp \
     && wget -q -O install-tl-unx.tar.gz \
         https://mirror.ctan.org/systems/texlive/tlnet/install-tl-unx.tar.gz \
     && tar -xzf install-tl-unx.tar.gz \
     && cd install-tl-* \
-    && cat > texlive.profile <<'EOF'
-selected_scheme scheme-full
-TEXDIR /usr/local/texlive/2025
-TEXMFCONFIG ~/.texlive2025/texmf-config
-TEXMFHOME ~/texmf
-TEXMFLOCAL /usr/local/texlive/texmf-local
-TEXMFSYSCONFIG /usr/local/texlive/2025/texmf-config
-TEXMFSYSVAR /usr/local/texlive/2025/texmf-var
-TEXMFVAR ~/.texlive2025/texmf-var
-option_doc 0
-option_src 0
-instopt_adjustpath 0
-instopt_adjustrepo 1
-instopt_letter 0
-instopt_portable 0
-instopt_write18_restricted 1
-EOF
+    && printf '%s\n' \
+        'selected_scheme scheme-full' \
+        'TEXDIR /usr/local/texlive/2025' \
+        'TEXMFCONFIG ~/.texlive2025/texmf-config' \
+        'TEXMFHOME ~/texmf' \
+        'TEXMFLOCAL /usr/local/texlive/texmf-local' \
+        'TEXMFSYSCONFIG /usr/local/texlive/2025/texmf-config' \
+        'TEXMFSYSVAR /usr/local/texlive/2025/texmf-var' \
+        'TEXMFVAR ~/.texlive2025/texmf-var' \
+        'option_doc 0' \
+        'option_src 0' \
+        'instopt_adjustpath 0' \
+        'instopt_adjustrepo 1' \
+        'instopt_letter 0' \
+        'instopt_portable 0' \
+        'instopt_write18_restricted 1' \
+        > texlive.profile \
     && perl ./install-tl --profile=texlive.profile --no-interaction \
     && cd / \
     && rm -rf /tmp/install-tl*
@@ -107,8 +107,8 @@ RUN ARCH=$(uname -m) \
     else \
         echo "Unsupported architecture: $ARCH" && exit 1; \
     fi \
-    && echo "export TEXLIVE_ARCH=${TEXLIVE_ARCH}" > /etc/texlive-arch \
-    && echo "export PATH=/usr/local/texlive/2025/bin/${TEXLIVE_ARCH}:\$PATH" >> /etc/texlive-arch
+    && printf 'export TEXLIVE_ARCH=%s\nexport PATH=/usr/local/texlive/2025/bin/%s:$PATH\n' \
+        "$TEXLIVE_ARCH" "$TEXLIVE_ARCH" > /etc/texlive-arch
 
 # ---------------------------------------------------------------------------- #
 #  Additional tools that need TeX Live or Cargo on PATH
@@ -127,7 +127,7 @@ RUN . /etc/texlive-arch \
     && tlmgr install latexmk chktex biber
 
 # ---------------------------------------------------------------------------- #
-#  Runtime environment  (both arch paths – harmless if one doesn't exist)
+#  Runtime environment
 # ---------------------------------------------------------------------------- #
 ENV PATH="/root/.cargo/bin:/usr/local/texlive/2025/bin/x86_64-linux:/usr/local/texlive/2025/bin/aarch64-linux:$PATH"
 ENV MANPATH="/usr/local/texlive/2025/texmf-dist/doc/man:"
