@@ -1,6 +1,8 @@
 FROM ubuntu:latest
 
-# Set environment variables to reduce interaction and prevent format building
+# ---------------------------------------------------------------------------- #
+#  Base environment
+# ---------------------------------------------------------------------------- #
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
@@ -8,34 +10,39 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TEXLIVE_INSTALL_NO_FORMATS=1 \
     TEXLIVE_INSTALL_NO_REBUILD=1
 
-# Install basic packages including LWP for faster downloads
-RUN apt-get update && apt-get -y install --no-install-recommends \
+# ---------------------------------------------------------------------------- #
+#  System packages  (jq moved here – avoids a second apt-get update later)
+# ---------------------------------------------------------------------------- #
+RUN apt-get update && apt-get install -y --no-install-recommends \
     apt-utils \
+    build-essential \
     curl \
-    wget \
-    perl \
-    libwww-perl \
     git \
+    inkscape \
+    jq \
+    libyaml-tiny-perl \
+    libfile-homedir-perl \
+    liblog-dispatch-perl \
+    libwww-perl \
+    libunicode-linebreak-perl \
     make \
     nodejs \
     npm \
     openssh-client \
+    pdf2svg \
+    perl \
+    poppler-utils \
     procps \
     python3-pkg-resources \
     python3-pygments \
-    inkscape \
     tree \
-    build-essential \
-    libyaml-tiny-perl \
-    libfile-homedir-perl \
-    liblog-dispatch-perl \
-    libunicode-linebreak-perl \
-    poppler-utils \
-    pdf2svg \
+    wget \
     && apt-get clean -y \
     && rm -rf /var/lib/apt/lists/*
 
-# Install glab (GitLab CLI) – multi-arch
+# ---------------------------------------------------------------------------- #
+#  glab – GitLab CLI (multi-arch)
+# ---------------------------------------------------------------------------- #
 RUN ARCH=$(uname -m) \
     && if [ "$ARCH" = "x86_64" ]; then \
         GLAB_ARCH="amd64"; \
@@ -44,39 +51,54 @@ RUN ARCH=$(uname -m) \
     else \
         echo "Unsupported architecture: $ARCH" && exit 1; \
     fi \
-    && curl -fsSL "https://gitlab.com/gitlab-org/cli/-/releases/permalink/latest/downloads/glab_linux_${GLAB_ARCH}.deb" -o /tmp/glab.deb \
+    && GLAB_VERSION=$(curl -fsSL \
+        "https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/releases?per_page=1" \
+        | jq -r '.[0].tag_name' | sed 's/^v//') \
+    && curl -fsSL \
+        "https://gitlab.com/gitlab-org/cli/-/releases/v${GLAB_VERSION}/downloads/glab_${GLAB_VERSION}_linux_${GLAB_ARCH}.deb" \
+        -o /tmp/glab.deb \
     && dpkg -i /tmp/glab.deb \
     && rm /tmp/glab.deb
 
-# Install Rust and Cargo
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
-    && . ~/.cargo/env
+# ---------------------------------------------------------------------------- #
+#  Rust / Cargo
+# ---------------------------------------------------------------------------- #
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --no-modify-path
+ENV PATH="/root/.cargo/bin:$PATH"
 
-# Download and install TeX Live 2025 manually
+# ---------------------------------------------------------------------------- #
+#  TeX Live 2025 – full scheme, no docs/src to keep image lean
+# ---------------------------------------------------------------------------- #
 RUN cd /tmp \
-    && wget -O install-tl-unx.tar.gz https://mirror.ctan.org/systems/texlive/tlnet/install-tl-unx.tar.gz \
+    && wget -q -O install-tl-unx.tar.gz \
+        https://mirror.ctan.org/systems/texlive/tlnet/install-tl-unx.tar.gz \
     && tar -xzf install-tl-unx.tar.gz \
     && cd install-tl-* \
-    && echo "selected_scheme scheme-full" > texlive.profile \
-    && echo "TEXDIR /usr/local/texlive/2025" >> texlive.profile \
-    && echo "TEXMFCONFIG ~/.texlive2025/texmf-config" >> texlive.profile \
-    && echo "TEXMFHOME ~/texmf" >> texlive.profile \
-    && echo "TEXMFLOCAL /usr/local/texlive/texmf-local" >> texlive.profile \
-    && echo "TEXMFSYSCONFIG /usr/local/texlive/2025/texmf-config" >> texlive.profile \
-    && echo "TEXMFSYSVAR /usr/local/texlive/2025/texmf-var" >> texlive.profile \
-    && echo "TEXMFVAR ~/.texlive2025/texmf-var" >> texlive.profile \
-    && echo "option_doc 0" >> texlive.profile \
-    && echo "option_src 0" >> texlive.profile \
-    && echo "instopt_adjustpath 0" >> texlive.profile \
-    && echo "instopt_adjustrepo 1" >> texlive.profile \
-    && echo "instopt_letter 0" >> texlive.profile \
-    && echo "instopt_portable 0" >> texlive.profile \
-    && echo "instopt_write18_restricted 1" >> texlive.profile \
+    && cat > texlive.profile <<'EOF'
+selected_scheme scheme-full
+TEXDIR /usr/local/texlive/2025
+TEXMFCONFIG ~/.texlive2025/texmf-config
+TEXMFHOME ~/texmf
+TEXMFLOCAL /usr/local/texlive/texmf-local
+TEXMFSYSCONFIG /usr/local/texlive/2025/texmf-config
+TEXMFSYSVAR /usr/local/texlive/2025/texmf-var
+TEXMFVAR ~/.texlive2025/texmf-var
+option_doc 0
+option_src 0
+instopt_adjustpath 0
+instopt_adjustrepo 1
+instopt_letter 0
+instopt_portable 0
+instopt_write18_restricted 1
+EOF
     && perl ./install-tl --profile=texlive.profile --no-interaction \
     && cd / \
     && rm -rf /tmp/install-tl*
 
-# Detect architecture and set PATH accordingly
+# ---------------------------------------------------------------------------- #
+#  Persist the arch-specific TeX Live bin path for later RUN steps
+# ---------------------------------------------------------------------------- #
 RUN ARCH=$(uname -m) \
     && if [ "$ARCH" = "x86_64" ]; then \
         TEXLIVE_ARCH="x86_64-linux"; \
@@ -85,37 +107,34 @@ RUN ARCH=$(uname -m) \
     else \
         echo "Unsupported architecture: $ARCH" && exit 1; \
     fi \
-    && echo "TEXLIVE_ARCH=$TEXLIVE_ARCH" > /etc/texlive-arch
+    && echo "export TEXLIVE_ARCH=${TEXLIVE_ARCH}" > /etc/texlive-arch \
+    && echo "export PATH=/usr/local/texlive/2025/bin/${TEXLIVE_ARCH}:\$PATH" >> /etc/texlive-arch
 
-# Set environment variables properly
-ENV MANPATH=""
-ENV INFOPATH=""
-
-# Install additional tools (without problematic Perl modules)
+# ---------------------------------------------------------------------------- #
+#  Additional tools that need TeX Live or Cargo on PATH
+# ---------------------------------------------------------------------------- #
 RUN . /etc/texlive-arch \
-    && export PATH="/usr/local/texlive/2025/bin/$TEXLIVE_ARCH:$PATH" \
-    && export MANPATH="/usr/local/texlive/2025/texmf-dist/doc/man:$MANPATH" \
-    && export INFOPATH="/usr/local/texlive/2025/texmf-dist/doc/info:$INFOPATH" \
     && npm install -g bibtex-tidy playwright \
     && npx playwright install --with-deps chromium \
     && curl -fsSL https://d2lang.com/install.sh | sh -s -- \
-    && . ~/.cargo/env \
     && cargo install tex-fmt
 
-# Install additional LaTeX tools using tlmgr
+# ---------------------------------------------------------------------------- #
+#  Extra LaTeX packages via tlmgr
+# ---------------------------------------------------------------------------- #
 RUN . /etc/texlive-arch \
-    && export PATH="/usr/local/texlive/2025/bin/$TEXLIVE_ARCH:$PATH" \
     && tlmgr update --self \
     && tlmgr install latexmk chktex biber
 
-# Set final environment variables for runtime (both architectures in PATH for compatibility)
+# ---------------------------------------------------------------------------- #
+#  Runtime environment  (both arch paths – harmless if one doesn't exist)
+# ---------------------------------------------------------------------------- #
 ENV PATH="/root/.cargo/bin:/usr/local/texlive/2025/bin/x86_64-linux:/usr/local/texlive/2025/bin/aarch64-linux:$PATH"
-ENV MANPATH="/usr/local/texlive/2025/texmf-dist/doc/man:$MANPATH"
-ENV INFOPATH="/usr/local/texlive/2025/texmf-dist/doc/info:$INFOPATH"
-
-# Reset DEBIAN_FRONTEND to dialog for interactive use if needed
+ENV MANPATH="/usr/local/texlive/2025/texmf-dist/doc/man:"
+ENV INFOPATH="/usr/local/texlive/2025/texmf-dist/doc/info:"
 ENV DEBIAN_FRONTEND=dialog
 
-# Verify installation
-RUN which tex && which xelatex && which pdflatex && tex --version
-
+# ---------------------------------------------------------------------------- #
+#  Smoke test
+# ---------------------------------------------------------------------------- #
+RUN which tex && which xelatex && which pdflatex && tex --version && glab --version
